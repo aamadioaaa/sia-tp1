@@ -13,6 +13,8 @@ class Sokoban:
     WALL = "#"
     EMPTY = " "
     GOAL = "."
+    GOAL_AND_BOX = "*"
+    GOAL_AND_PLAYER = "+"
 
     def __init__(self):
         """Inicializa datos de la clase"""
@@ -23,7 +25,7 @@ class Sokoban:
         self.movements = ""
 
     def parse_grid(self, grid: str) -> np.ndarray:
-        """Transforma el tableto de juego en un array de numpy
+        """Transforma el tablero de juego en un array de numpy
 
         Args:
             grid (str): tablero en formato ASCII de acuerdo a http://www.game-sokoban.com/
@@ -39,14 +41,25 @@ class Sokoban:
             for j, cell in enumerate(row):
                 if cell == self.WALL:
                     self.grid[i, j] = self.WALL
-                elif cell == self.BOX:
+                elif cell in self.BOX:
                     self.grid[i, j] = self.BOX
                     self.boxes.append((i, j))
                 elif cell == self.GOAL:
                     self.goals.append((i, j))
+                elif cell == self.GOAL_AND_BOX:
+                    self.grid[i, j] = self.BOX
+                    self.boxes.append((i, j))
+                    self.goals.append((i, j))
                 elif cell == self.PLAYER:
                     self.grid[i, j] = self.PLAYER
                     self.player = (i, j)
+                    gridlines = grid.split("\n")
+                elif cell == self.GOAL_AND_PLAYER:
+                    self.grid[i, j] = self.GOAL
+                    self.goals.append((i, j))
+                    self.player = (i, j)
+
+                
 
     def _move(self, x: int, y: int):
         """Mueve el jugador en la dirección indicada.
@@ -131,44 +144,12 @@ class Sokoban:
         Returns:
             list: funciones de movimiento del jugador
         """
-
-        if not self.movements:
-            return [
-                self.move_up,
-                self.move_down,
-                self.move_right,
-                self.move_left,
-            ]
-
-        # esto es para evitar que el jugador vaya hacia arriba y hacia abajo
-        # infinitamente. Con solo retornar toda la lista de movimientos 
-        # funcionaria bien en el BFS pero no en el DFS.
-        if self.movements[-1] == "u":
-            return [
-                self.move_up,
-                self.move_right,
-                self.move_left,
-            ]
-        elif self.movements[-1] == "d":
-            return [
-                self.move_down,
-                self.move_right,
-                self.move_left,
-            ]
-        elif self.movements[-1] == "r":
-            return [
-                self.move_up,
-                self.move_down,
-                self.move_right,
-            ]
-        elif self.movements[-1] == "l":
-            return [
-                self.move_up,
-                self.move_down,
-                self.move_left,
-            ]
-
-
+        return [
+            self.move_down,
+            self.move_up,
+            self.move_right,
+            self.move_left,
+        ]
 
 
     def is_finished(self) -> bool:
@@ -179,6 +160,7 @@ class Sokoban:
         """
         return all([box in self.goals for box in self.boxes])
 
+
     def is_deadlocked(self) -> bool:
         """Verifica que el juego no se encuentre en un estado sin solución.
         Esto significa que la caja se queda en una esquina y no puede ser movida.
@@ -186,15 +168,138 @@ class Sokoban:
         Returns:
             bool: indicador de si el juego está en un estado sin solución
         """
-        for i, j in self.boxes:
-            if (i,j,) in self.goals: # Evita deadlock si la caja está en un goal
-                continue
-            if self.grid[i - 1, j] == self.WALL and self.grid[i, j - 1] == self.WALL:
+
+        if self.is_finished(): return False
+
+        for box in self.boxes:
+            # Es un deadlock si una caja llega a una esquina, se excluye cajas en esquinas que son GOAL
+            if self._is_in_corner(*box) and box not in self.goals:
                 return True
-            if self.grid[i - 1, j] == self.WALL and self.grid[i, j + 1] == self.WALL:
+            
+            # Es un deadlock si una caja queda sobre una pared y solo puede moverse sobre ella
+            if self._is_wall_deadlock(*box):
                 return True
-            if self.grid[i + 1, j] == self.WALL and self.grid[i, j - 1] == self.WALL:
-                return True
-            if self.grid[i + 1, j] == self.WALL and self.grid[i, j + 1] == self.WALL:
-                return True
+        
+        # Si llegamos aca no hay deadlock
         return False
+
+
+    def _is_in_corner(self, i:int, j:int):
+        """dada una posicion, indica si se encuentra en una esquina del tablero
+
+        Args:
+            i (int): posicion horizontal
+            j (int): posicion vertical
+
+        Returns:
+            bool: indicacione si esta en el tablero
+        """
+        if self.grid[i - 1, j] == self.WALL and self.grid[i, j - 1] == self.WALL:
+            return True
+        if self.grid[i - 1, j] == self.WALL and self.grid[i, j + 1] == self.WALL:
+            return True
+        if self.grid[i + 1, j] == self.WALL and self.grid[i, j - 1] == self.WALL:
+            return True
+        if self.grid[i + 1, j] == self.WALL and self.grid[i, j + 1] == self.WALL:
+            return True
+        return False
+    
+
+    def _is_wall_deadlock(self, i:int, j:int):
+        """Verifica que la caja esta en una posicion donde es imposible llevarla
+        hacia un goal. Por ejemplo debajos se ve que la caja ($) es imposible
+        llevarla al goal (.)
+
+        #########
+        #    $  #
+        #  .    #
+
+        Args:
+            i (int): posicion horizontal de la caja
+            j (int): posicion vertical de la caja
+        """
+        grid = self.grid
+
+        # Horizontal
+        l_offset = 0
+        r_offset = 0
+        while True:
+            move_r_offset = 1 if grid[i, j + r_offset] != self.WALL else 0
+            move_l_offset = 1 if grid[i, j - l_offset] != self.WALL else 0
+            r_offset += move_r_offset
+            l_offset += move_l_offset
+            if move_l_offset == 0 and move_r_offset == 0:
+                break
+
+        all_wall_up   = all(grid[i-1, j-l_offset+1:j+r_offset] == self.WALL)
+        all_wall_down = all(grid[i+1, j-l_offset+1:j+r_offset] == self.WALL)
+        goal_in_row = any([(g[0] == i) and (j-l_offset+1 <= g[1] <= j+r_offset) for g in self.goals])
+
+        if (not goal_in_row and all_wall_down) or (not goal_in_row and all_wall_up):
+            return True
+
+        # Vertical
+        u_offset = 0
+        d_offset = 0
+        while True:
+            move_u_offset = 1 if grid[i - u_offset, j] != self.WALL else 0
+            move_d_offset = 1 if grid[i + d_offset, j] != self.WALL else 0
+            u_offset += move_u_offset
+            d_offset += move_d_offset
+            if move_u_offset == 0 and move_d_offset == 0:
+                break
+
+        all_wall_left  = all(grid[i-u_offset+1:i+d_offset , j-1] == self.WALL)
+        all_wall_right = all(grid[i-u_offset+1:i+d_offset , j+1] == self.WALL)
+        goal_in_row = any([(g[1] == j) and (i-u_offset+1 <= g[0] <= i+d_offset) for g in self.goals])
+
+        if (not goal_in_row and all_wall_left) or (not goal_in_row and all_wall_right):
+            return True
+
+        # En caso de que no sea deadlock
+        return False
+
+
+    def get_actual_cost(self):
+        """
+        Devuelve la cantidad de pasos para llegar a ese estado
+
+        Returns:
+            int: costo del nodo actual
+
+        """
+        return len(self.movements)
+    
+
+    def get_heuristic(self, heuristics_names):
+        """Devuelve la combinacion de heuristicas del nodo (costo estimado a la solucion)
+        
+        Args:
+            heuristics_names (_type_): listado de heuriticas a usar
+
+        Returns:
+            int: posible costo hasta alcanzar la solucion
+        """
+
+        if not heuristics_names: # si no se pasa una heuristica retorna 0
+            return 0
+
+        valores_heuristica = []
+        for heuristica_name in heuristics_names:
+            heuristica = getattr(self, "heuristica_{}".format(heuristica_name))
+            valores_heuristica.append(heuristica())
+
+        return max(valores_heuristica)
+    
+
+    def heuristica_manhattan(self):
+        """Distancia Manhattan para llevar todas las cajas a un goal.
+
+        Heuristica 1 de la consigna
+
+        Returns:
+            float: suma de la distancia o norma 0 entre caja y goal más proximo
+        """
+        goals = np.array(self.goals)
+        boxes = np.array(self.boxes)        
+        return sum([min([sum(abs(box - goal)) for goal in goals]) for box in boxes])
